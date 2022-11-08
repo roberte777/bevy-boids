@@ -1,10 +1,12 @@
+use std::slice;
+
 use bevy::prelude::*;
 use bevy_prototype_lyon::prelude::*;
 use rand::prelude::*;
 const ALIGNMENT: f32 = 7.;
 const COHESION: f32 = 0.3;
 const SEPARATION: f32 = 0.5;
-const FLEE: f32 = 1.;
+const FLEE: f32 = 10000.;
 const CHASE: f32 = 1.;
 const TIME_STEP: f32 = 1. / 60.;
 pub struct WinSize {
@@ -73,15 +75,18 @@ fn setup_system(mut commands: Commands, mut windows: ResMut<Windows>) {
             acceleration: Vec2::new(0., 0.),
             position: Vec2::new(x, y),
             max_force: match boid_type {
-                BoidType::Predator => 0.5,
-                BoidType::Prey => 0.3,
+                BoidType::Predator => 0.8,
+                BoidType::Prey => 0.7,
             },
             max_speed: match boid_type {
-                BoidType::Predator => 4.0,
-                BoidType::Prey => 6.0,
+                BoidType::Predator => 3.,
+                BoidType::Prey => 5.,
+            },
+            perception_radius: match boid_type {
+                BoidType::Predator => 100.0,
+                BoidType::Prey => 50.0,
             },
             boid_type,
-            perception_radius: 50.,
         };
         commands
             .spawn_bundle(GeometryBuilder::build_as(
@@ -164,10 +169,12 @@ fn flee(boids: &[&Mut<'_, Boid>], boid: &Boid) -> Vec2 {
             if d > 0. && d < boid.perception_radius {
                 let diff = boid.position - other.position;
                 steering += diff.normalize() / d;
-                break;
             }
         }
     }
+
+    // steering = steering.normalize() * boid.max_speed;
+    // steering -= boid.velocity;
     steering * FLEE
 }
 fn chase(boids: &[&Mut<'_, Boid>], boid: &Boid) -> Vec2 {
@@ -205,6 +212,19 @@ fn update_boids(
         let mut steering = Vec2::new(0., 0.);
         if matches!(boid.boid_type, BoidType::Predator) {
             // predators chase Prey
+            steering += separation(
+                temp.iter()
+                    .filter_map(|b| {
+                        if matches!(b.boid_type, BoidType::Predator) {
+                            Some(b.to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                boid,
+            );
             steering += chase(temp, boid);
         } else {
             //Prey avoid predators and flock
