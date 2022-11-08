@@ -1,6 +1,11 @@
+use std::borrow::Borrow;
+
 use bevy::{prelude::*, render::texture};
 use bevy_prototype_lyon::prelude::*;
 use rand::prelude::*;
+const ALIGNMENT: f32 = 0.03;
+const COHESION: f32 = 0.003;
+const SEPARATION: f32 = 1.;
 const TIME_STEP: f32 = 1. / 60.;
 pub struct WinSize {
     pub w: f32,
@@ -68,8 +73,8 @@ fn setup_system(mut commands: Commands, mut windows: ResMut<Windows>) {
             velocity: Vec2::new(rng.gen_range(-1..1) as f32, rng.gen_range(-1..1) as f32),
             acceleration: Vec2::new(0., 0.),
             position: Vec2::new(x, y),
-            max_force: 0.1,
-            max_speed: 2.,
+            max_force: 0.6,
+            max_speed: 5.,
             perception_radius: 50.,
         };
         commands
@@ -92,60 +97,60 @@ fn setup_system(mut commands: Commands, mut windows: ResMut<Windows>) {
 }
 fn alignment(boids: &[&Mut<'_, Boid>], boid: &Boid) -> Vec2 {
     let mut steering = Vec2::new(0., 0.);
-    let mut total = 0;
+    let mut count = 0;
     for other in boids {
         let d = boid.position.distance(other.position);
         if d > 0. && d < boid.perception_radius {
             steering += other.velocity;
-            total += 1;
+            count += 1;
         }
     }
-    if total > 0 {
-        steering /= total as f32;
+    if count > 0 {
+        steering /= count as f32;
         steering = steering.normalize() * boid.max_speed;
         steering -= boid.velocity;
         steering = steering.clamp_length_max(boid.max_force);
     }
-    steering
+    steering * ALIGNMENT
 }
 fn cohesion(boids: &[&Mut<'_, Boid>], boid: &Boid) -> Vec2 {
     let mut steering = Vec2::new(0., 0.);
-    let mut total = 0;
+    let mut count = 0;
     for other in boids {
         let d = boid.position.distance(other.position);
         if d > 0. && d < boid.perception_radius {
             steering += other.position;
-            total += 1;
+            count += 1;
         }
     }
-    if total > 0 {
-        steering /= total as f32;
+    if count > 0 {
+        steering /= count as f32;
         steering -= boid.position;
         steering = steering.normalize() * boid.max_speed;
         steering -= boid.velocity;
         steering = steering.clamp_length_max(boid.max_force);
     }
-    steering / 2.
+    steering * COHESION
 }
 
 fn separation(boids: &[&Mut<'_, Boid>], boid: &Boid) -> Vec2 {
     let mut steering = Vec2::new(0., 0.);
-    let mut total = 0;
+    let mut count = 0;
     for other in boids {
         let d = boid.position.distance(other.position);
         if d > 0. && d < boid.perception_radius {
             let diff = boid.position - other.position;
             steering += diff.normalize() / d;
-            total += 1;
+            count += 1;
         }
     }
-    if total > 0 {
-        steering /= total as f32;
+    if count > 0 {
+        steering /= count as f32;
         steering = steering.normalize() * boid.max_speed;
         steering -= boid.velocity;
         steering = steering.clamp_length_max(boid.max_force);
     }
-    steering / 2.
+    steering * SEPARATION
 }
 
 fn update_boids(
@@ -161,21 +166,24 @@ fn update_boids(
         let (mid, tail) = slice.split_at_mut(i + 1);
         let (head, element) = mid.split_at_mut(i);
         let (boid, transform) = &mut element[0];
-        //use alignment, cohesion, separation to determine steering
-        //combine head and tail
         let mut others = Vec::new();
         others.extend(head.iter().map(|(b, _)| b));
         others.extend(tail.iter().map(|(b, _)| b));
         let temp = others.as_slice();
 
-        let steering = alignment(temp, boid) + cohesion(temp, boid) + separation(temp, boid);
+        let mut steering = alignment(temp, boid) + cohesion(temp, boid) + separation(temp, boid);
+        steering = steering.clamp_length_max(boid.max_force);
+
         boid.acceleration += steering;
         let acceleration = boid.acceleration;
         boid.velocity += acceleration;
-        boid.velocity = boid.velocity.clamp_length_max(boid.max_speed);
-        transform.translation += Vec3::new(boid.velocity.x, boid.velocity.y, 0.);
+        let velocity = boid.velocity;
+        boid.position += velocity;
+        boid.acceleration *= 0.;
+        transform.translation.x = boid.position.x;
+        transform.translation.y = boid.position.y;
 
-        // wrap around
+        //// wrap around
         if transform.translation.x > win_size.w / 2. {
             transform.translation.x = -win_size.w / 2.;
         }
@@ -189,11 +197,10 @@ fn update_boids(
             transform.translation.y = win_size.h / 2.;
         }
 
-        // update rotation
+        //// update rotation
         let angle = boid.velocity.y.atan2(boid.velocity.x);
         transform.rotation = Quat::from_rotation_z(angle);
 
-        //update position
-        boid.position = Vec2::new(transform.translation.x, transform.translation.y);
+        ////update position
     }
 }
